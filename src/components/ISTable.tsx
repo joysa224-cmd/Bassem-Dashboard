@@ -59,13 +59,14 @@ export function ISTable({ data }: { data: IncomeStatementResult }) {
       </TableHeader>
       <TableBody>
         <SectionRow label="الإيرادات" />
-        <DataRow label="إيراد النشاط" amount={data.revenue} pct={data.totalRevenue ? (data.revenue / data.totalRevenue) * 100 : 0} indent />
-        <DataRow
-          label="إيرادات متنوعة"
-          amount={data.miscRevenue}
-          pct={data.totalRevenue ? (data.miscRevenue / data.totalRevenue) * 100 : 0}
-          indent
-        />
+        {data.revenueRows.length === 0 && (
+          <TableRow>
+            <TableCell colSpan={3} className="text-gray-400">لا توجد بيانات</TableCell>
+          </TableRow>
+        )}
+        {data.revenueRows.map((row) => (
+          <DataRow key={row.label} label={row.label} amount={row.amount} pct={row.pctOfRevenue} indent />
+        ))}
         <TotalRow label="إجمالي الإيرادات" amount={data.totalRevenue} pct={100} />
 
         <SectionRow label="مصروفات التشغيل" />

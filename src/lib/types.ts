@@ -1,3 +1,25 @@
+export const ACCOUNT_CATEGORIES = [
+  "revenue",
+  "opex",
+  "admin",
+  "cashBank",
+  "receivables",
+  "payables",
+] as const;
+
+export type AccountCategory = (typeof ACCOUNT_CATEGORIES)[number];
+
+export type AccountCategoryOrNone = AccountCategory | "unclassified";
+
+export const ACCOUNT_CATEGORY_LABELS: Record<AccountCategory, string> = {
+  revenue: "إيرادات",
+  opex: "مصروفات تشغيل",
+  admin: "مصروفات إدارية وعمومية",
+  cashBank: "نقدية / بنوك",
+  receivables: "عملاء (مدينون)",
+  payables: "موردون / دائنون",
+};
+
 export interface Transaction {
   entryNo: number;
   date: string; // ISO date string
@@ -7,11 +29,30 @@ export interface Transaction {
   mainAccount: string;
   subAccount: string;
   description: string;
-  category: string;
-  quantity: number;
-  price: number;
   costCenter: string;
   isOpening: boolean;
+  accountCategory: AccountCategoryOrNone;
+}
+
+/** Positions (0-indexed columns) picked by the user for each ledger field. -1 means "not mapped". */
+export interface ColumnMapping {
+  skipRows: number; // 0-5, rows to skip before the header row
+  entryNo: number;
+  date: number;
+  debit: number;
+  credit: number;
+  mainAccount: number;
+  subAccount: number;
+  description: number;
+  costCenter: number;
+}
+
+/** account name (normalized) -> category */
+export type CategoryMapping = Record<string, AccountCategoryOrNone>;
+
+export interface SavedMapping {
+  columnMapping: ColumnMapping;
+  categoryMapping: CategoryMapping;
 }
 
 export interface DataPayload {
@@ -30,8 +71,7 @@ export interface IncomeStatementRow {
 
 export interface IncomeStatementResult {
   months: string[];
-  revenue: number;
-  miscRevenue: number;
+  revenueRows: IncomeStatementRow[];
   totalRevenue: number;
   opexRows: IncomeStatementRow[];
   totalOpex: number;
@@ -46,8 +86,6 @@ export interface IncomeStatementResult {
 export interface MonthlySummary {
   monthKey: string;
   label: string;
-  revenue: number;
-  miscRevenue: number;
   totalRevenue: number;
   opex: number;
   admin: number;
@@ -84,11 +122,6 @@ export interface CashFlowMonth {
   outflows: CashFlowLine[];
   totalOutflows: number;
   closing: number;
-}
-
-export interface CashFlowResult {
-  bank: CashFlowMonth[];
-  cash: CashFlowMonth[];
 }
 
 export interface ExpenseSubAccountMonth {

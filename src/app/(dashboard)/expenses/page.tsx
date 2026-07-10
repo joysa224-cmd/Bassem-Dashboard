@@ -22,7 +22,7 @@ import { topNWithOther } from "@/lib/chartTheme";
 import { formatNumber, monthKeyToLabel } from "@/lib/utils";
 
 export default function ExpensesPage() {
-  const { transactions, loading, error } = useData();
+  const { transactions, stage, error } = useData();
 
   const months = useMemo(() => getAvailableMonths(transactions), [transactions]);
   const opexSeries = useMemo(() => getExpenseSubAccountSeries(transactions, isOpex), [transactions]);
@@ -91,7 +91,7 @@ export default function ExpensesPage() {
     return <Badge variant="neutral">{change >= 0 ? "+" : ""}{change.toFixed(0)}%</Badge>;
   }
 
-  if (loading) return <LoadingState />;
+  if (stage === "loading") return <LoadingState />;
   if (error) return <ErrorState message={error} />;
   if (transactions.length === 0) return <EmptyState />;
 

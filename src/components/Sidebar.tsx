@@ -13,6 +13,7 @@ import {
   LogOut,
   Loader2,
   X,
+  ListRestart,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useData } from "@/components/DataProvider";
@@ -31,7 +32,7 @@ interface SidebarProps {
 
 export function Sidebar({ open = true, onClose }: SidebarProps) {
   const pathname = usePathname();
-  const { uploadFile, fileName, sheetName, usedFallbackSheet } = useData();
+  const { stage, uploadFile, fileName, sheetName, usedFallbackSheet, resetMapping } = useData();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -43,17 +44,18 @@ export function Sidebar({ open = true, onClose }: SidebarProps) {
     setMessage(null);
 
     try {
-      const { sheetName: usedSheet, usedFallback } = await uploadFile(file);
-      const text = usedFallback
-        ? `تم تحميل الملف بنجاح — تم استخدام الشيت "${usedSheet}" لعدم وجود شيت باسم "trans"`
-        : `تم تحميل الملف بنجاح — الشيت المستخدم: "${usedSheet}"`;
-      setMessage({ type: "success", text });
+      await uploadFile(file);
     } catch (err) {
       setMessage({ type: "error", text: err instanceof Error ? err.message : "فشل تحميل الملف" });
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
+  }
+
+  function handleResetMapping() {
+    resetMapping();
+    setMessage({ type: "success", text: "تم مسح الربط المحفوظ — سيتم طلب إعادة الربط عند رفع ملف جديد" });
   }
 
   return (
@@ -109,11 +111,11 @@ export function Sidebar({ open = true, onClose }: SidebarProps) {
         />
         <button
           onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
+          disabled={uploading || stage === "mapping-columns" || stage === "mapping-categories"}
           className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-60"
         >
           {uploading ? <Loader2 className="h-[18px] w-[18px] animate-spin" /> : <Upload className="h-[18px] w-[18px]" />}
-          {uploading ? "جاري الرفع..." : "رفع ملف Excel"}
+          {uploading ? "جاري القراءة..." : "رفع ملف Excel"}
         </button>
 
         {fileName && (
@@ -128,6 +130,15 @@ export function Sidebar({ open = true, onClose }: SidebarProps) {
               <span className="text-amber-600"> (أول شيت — لا يوجد &quot;trans&quot;)</span>
             )}
           </p>
+        )}
+        {fileName && (
+          <button
+            onClick={handleResetMapping}
+            className="flex items-center gap-3 rounded-lg px-3 py-2 text-xs font-medium text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          >
+            <ListRestart className="h-4 w-4" />
+            إعادة ضبط ربط الأعمدة
+          </button>
         )}
         {message && (
           <p

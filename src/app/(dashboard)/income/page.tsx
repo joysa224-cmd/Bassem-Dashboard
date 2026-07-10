@@ -21,7 +21,7 @@ import {
 import { topNWithOther } from "@/lib/chartTheme";
 
 export default function IncomeStatementPage() {
-  const { transactions, loading, error } = useData();
+  const { transactions, stage, error } = useData();
   const [monthKey, setMonthKey] = useState<string>("all");
   const [costCenter, setCostCenter] = useState<string>("all");
 
@@ -40,7 +40,7 @@ export default function IncomeStatementPage() {
 
   const opexDonutData = useMemo(() => topNWithOther(is.opexRows), [is.opexRows]);
 
-  if (loading) return <LoadingState />;
+  if (stage === "loading") return <LoadingState />;
   if (error) return <ErrorState message={error} />;
   if (transactions.length === 0) return <EmptyState />;
 
@@ -57,8 +57,7 @@ export default function IncomeStatementPage() {
             {
               sheetName: "IS",
               rows: [
-                { البيان: "إيراد النشاط", المبلغ: is.revenue, "%": "" },
-                { البيان: "إيرادات متنوعة", المبلغ: is.miscRevenue, "%": "" },
+                ...is.revenueRows.map((r) => ({ البيان: r.label, المبلغ: r.amount, "%": r.pctOfRevenue.toFixed(2) })),
                 { البيان: "إجمالي الإيرادات", المبلغ: is.totalRevenue, "%": 100 },
                 ...is.opexRows.map((r) => ({ البيان: r.label, المبلغ: r.amount, "%": r.pctOfRevenue.toFixed(2) })),
                 { البيان: "إجمالي مصروفات التشغيل", المبلغ: is.totalOpex, "%": "" },

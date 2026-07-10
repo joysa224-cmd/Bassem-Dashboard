@@ -1,17 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Landmark, Wallet2 } from "lucide-react";
+import { useMemo } from "react";
+import { Wallet2 } from "lucide-react";
 import { useData } from "@/components/DataProvider";
 import { LoadingState, EmptyState, ErrorState } from "@/components/EmptyState";
 import { KPICard } from "@/components/KPICard";
 import { ExportButton, type ExportSheet } from "@/components/ExportButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { MultiLineChart } from "@/components/charts/MultiLineChart";
 import { CashFlowStatementTable } from "@/components/CashFlowStatementTable";
 import { computeCashFlow } from "@/lib/dataProcessor";
-import { cn } from "@/lib/utils";
 import type { CashFlowMonth } from "@/lib/types";
 
 function statementToRows(months: CashFlowMonth[]) {
@@ -28,32 +26,18 @@ function statementToRows(months: CashFlowMonth[]) {
 }
 
 export default function CashFlowPage() {
-  const { transactions, loading, error } = useData();
-  const [account, setAccount] = useState<"bank" | "cash">("bank");
+  const { transactions, stage, error } = useData();
 
-  const cashFlow = useMemo(() => computeCashFlow(transactions), [transactions]);
-  const activeMonths = account === "bank" ? cashFlow.bank : cashFlow.cash;
-  const latestBank = cashFlow.bank[cashFlow.bank.length - 1];
-  const latestCash = cashFlow.cash[cashFlow.cash.length - 1];
+  const months = useMemo(() => computeCashFlow(transactions), [transactions]);
+  const latest = months[months.length - 1];
 
-  const trendData = useMemo(
-    () =>
-      cashFlow.bank.map((m, i) => ({
-        label: m.label,
-        بنك: m.closing,
-        صندوق: cashFlow.cash[i]?.closing ?? 0,
-      })),
-    [cashFlow]
-  );
+  const trendData = useMemo(() => months.map((m) => ({ label: m.label, الرصيد: m.closing })), [months]);
 
-  if (loading) return <LoadingState />;
+  if (stage === "loading") return <LoadingState />;
   if (error) return <ErrorState message={error} />;
   if (transactions.length === 0) return <EmptyState />;
 
-  const getSheets = (): ExportSheet[] => [
-    { sheetName: "Bank", rows: statementToRows(cashFlow.bank) },
-    { sheetName: "Cash", rows: statementToRows(cashFlow.cash) },
-  ];
+  const getSheets = (): ExportSheet[] => [{ sheetName: "CashFlow", rows: statementToRows(months) }];
 
   return (
     <div className="flex flex-col gap-6">
@@ -66,54 +50,27 @@ export default function CashFlowPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <KPICard title="رصيد البنك الحالي" value={latestBank?.closing ?? 0} icon={Landmark} />
-        <KPICard title="رصيد الصندوق الحالي" value={latestCash?.closing ?? 0} icon={Wallet2} />
+        <KPICard title="الرصيد النقدي الحالي" value={latest?.closing ?? 0} icon={Wallet2} />
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>الرصيد الختامي الجاري — البنك والصندوق</CardTitle>
+          <CardTitle>الرصيد الختامي الجاري</CardTitle>
         </CardHeader>
         <CardContent>
-          <MultiLineChart
-            data={trendData}
-            xKey="label"
-            series={[
-              { key: "بنك", name: "البنك" },
-              { key: "صندوق", name: "الصندوق" },
-            ]}
-          />
+          <MultiLineChart data={trendData} xKey="label" series={[{ key: "الرصيد", name: "الرصيد" }]} />
         </CardContent>
       </Card>
 
-      <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          variant={account === "bank" ? "default" : "outline"}
-          onClick={() => setAccount("bank")}
-          className={cn(account === "bank" && "shadow-sm")}
-        >
-          البنك
-        </Button>
-        <Button
-          size="sm"
-          variant={account === "cash" ? "default" : "outline"}
-          onClick={() => setAccount("cash")}
-          className={cn(account === "cash" && "shadow-sm")}
-        >
-          الصندوق
-        </Button>
-      </div>
-
       <Card>
         <CardHeader>
-          <CardTitle>{account === "bank" ? "بيان حركة البنك الشهري" : "بيان حركة الصندوق الشهري"}</CardTitle>
+          <CardTitle>بيان الحركة الشهري</CardTitle>
         </CardHeader>
         <CardContent>
-          {activeMonths.length === 0 ? (
-            <p className="py-10 text-center text-sm text-gray-400">لا توجد بيانات لهذا الحساب</p>
+          {months.length === 0 ? (
+            <p className="py-10 text-center text-sm text-gray-400">لا توجد بيانات لحسابات النقدية/البنوك</p>
           ) : (
-            <CashFlowStatementTable months={activeMonths} />
+            <CashFlowStatementTable months={months} />
           )}
         </CardContent>
       </Card>

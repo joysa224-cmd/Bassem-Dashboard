@@ -14,12 +14,12 @@ import { computeCollectionsAnalytics } from "@/lib/dataProcessor";
 import { formatNumber } from "@/lib/utils";
 
 export default function AnalyticsPage() {
-  const { transactions, loading, error } = useData();
+  const { transactions, stage, error } = useData();
 
   const rows = useMemo(() => computeCollectionsAnalytics(transactions), [transactions]);
   const latest = rows[rows.length - 1];
 
-  if (loading) return <LoadingState />;
+  if (stage === "loading") return <LoadingState />;
   if (error) return <ErrorState message={error} />;
   if (transactions.length === 0) return <EmptyState />;
 

@@ -2,30 +2,18 @@ import * as XLSX from "xlsx";
 import { monthKeyToLabel } from "./utils";
 import type {
   Transaction,
+  ColumnMapping,
+  CategoryMapping,
+  AccountCategoryOrNone,
   IncomeStatementResult,
   IncomeStatementRow,
   MonthlySummary,
   CollectionsMonthRow,
-  CashFlowResult,
   CashFlowMonth,
   ExpenseSubAccountMonth,
 } from "./types";
 
-const SHEET_NAME = "trans";
-const SKIP_ROWS = 4;
-const HEADER_ROWS = 1;
-
-export const MAIN_ACCOUNTS = {
-  REVENUE: "إيراد.نشاط",
-  MISC_REVENUE: "ايراد.نشاط.متنوع",
-  OPEX: "م.التشغيل",
-  ADMIN: "م.عمومية.وادارية",
-  BANK: "بنك",
-  CASH: "الصندوق",
-  AR: "عملاء",
-} as const;
-
-export const AP_ACCOUNTS = ["موردين", "دائنون"];
+const PREFERRED_SHEET_NAME = "trans";
 
 export function norm(value: unknown): string {
   return String(value ?? "")
@@ -53,6 +41,10 @@ function toDate(value: unknown): Date | null {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Workbook / sheet discovery
+// ---------------------------------------------------------------------------
+
 export interface SheetResolution {
   sheetName: string;
   usedFallback: boolean;
@@ -65,8 +57,8 @@ export interface SheetResolution {
  */
 export function resolveSheetName(sheetNames: string[]): SheetResolution | null {
   if (sheetNames.length === 0) return null;
-  if (sheetNames.includes(SHEET_NAME)) {
-    return { sheetName: SHEET_NAME, usedFallback: false };
+  if (sheetNames.includes(PREFERRED_SHEET_NAME)) {
+    return { sheetName: PREFERRED_SHEET_NAME, usedFallback: false };
   }
   return { sheetName: sheetNames[0], usedFallback: true };
 }
@@ -76,37 +68,83 @@ export function detectWorkbookSheet(buffer: ArrayBuffer): SheetResolution | null
   return resolveSheetName(workbook.SheetNames);
 }
 
-export interface ParsedWorkbook {
-  transactions: Transaction[];
-  sheetName: string;
-  usedFallback: boolean;
-}
-
-export function parseExcelFile(buffer: ArrayBuffer): ParsedWorkbook {
+/**
+ * Reads a sheet into a raw array-of-arrays, with no rows skipped and blank
+ * rows preserved — "skip N rows" must count physical spreadsheet rows, and
+ * dropping blank rows here would shift everything after them.
+ */
+export function readSheetAOA(buffer: ArrayBuffer, sheetName: string): unknown[][] {
   const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-  const resolution = resolveSheetName(workbook.SheetNames);
-  if (!resolution) {
-    throw new Error("الملف لا يحتوي على أي شيتات");
-  }
-  const { sheetName, usedFallback } = resolution;
   const sheet = workbook.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+  if (!sheet) return [];
+  return XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,
-    range: SKIP_ROWS + HEADER_ROWS,
-    blankrows: false,
+    range: 0,
+    blankrows: true,
     defval: null,
   });
+}
 
+export function excelColumnLetter(index: number): string {
+  let n = index;
+  let label = "";
+  do {
+    label = String.fromCharCode(65 + (n % 26)) + label;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return label;
+}
+
+export function getColumnCount(rows: unknown[][]): number {
+  return rows.reduce((max, row) => Math.max(max, row.length), 0);
+}
+
+/** Header label per column: the cell text at the chosen header row, or a spreadsheet-style fallback (A, B, C…). */
+export function getHeaderLabels(rows: unknown[][], skipRows: number): string[] {
+  const count = getColumnCount(rows);
+  const headerRow = rows[skipRows] ?? [];
+  return Array.from({ length: count }, (_, i) => {
+    const label = norm(headerRow[i]);
+    return label || `العمود ${excelColumnLetter(i)}`;
+  });
+}
+
+/** Unique, normalized account names found in the mapped main-account column. */
+export function getUniqueMainAccounts(rows: unknown[][], mapping: ColumnMapping): string[] {
+  const set = new Set<string>();
+  for (const row of rows.slice(mapping.skipRows + 1)) {
+    const value = norm(row[mapping.mainAccount]);
+    if (value) set.add(value);
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b, "ar"));
+}
+
+// ---------------------------------------------------------------------------
+// Transaction construction (column + category mapping applied)
+// ---------------------------------------------------------------------------
+
+export function buildTransactions(
+  rows: unknown[][],
+  columnMapping: ColumnMapping,
+  categoryMapping: CategoryMapping
+): Transaction[] {
   const transactions: Transaction[] = [];
+  const dataRows = rows.slice(columnMapping.skipRows + 1);
 
-  for (const row of rows) {
+  const cell = (row: unknown[], colIndex: number): unknown => {
+    if (colIndex < 0) return null;
+    return row[colIndex];
+  };
+
+  for (const row of dataRows) {
     if (!row || row.every((c) => c === null || c === "")) continue;
 
-    const mainAccount = norm(row[4]);
+    const mainAccount = norm(cell(row, columnMapping.mainAccount));
     if (!mainAccount) continue;
 
-    const date = toDate(row[1]);
-    const entryNo = toNumber(row[0]);
+    const date = toDate(cell(row, columnMapping.date));
+    const entryNo = toNumber(cell(row, columnMapping.entryNo));
+    const accountCategory: AccountCategoryOrNone = categoryMapping[mainAccount] ?? "unclassified";
 
     transactions.push({
       entryNo,
@@ -114,30 +152,30 @@ export function parseExcelFile(buffer: ArrayBuffer): ParsedWorkbook {
       monthKey: date
         ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
         : "",
-      debit: toNumber(row[2]),
-      credit: toNumber(row[3]),
+      debit: toNumber(cell(row, columnMapping.debit)),
+      credit: toNumber(cell(row, columnMapping.credit)),
       mainAccount,
-      subAccount: norm(row[5]),
-      description: norm(row[6]),
-      category: norm(row[7]),
-      quantity: toNumber(row[8]),
-      price: toNumber(row[9]),
-      costCenter: norm(row[10]),
+      subAccount: norm(cell(row, columnMapping.subAccount)),
+      description: norm(cell(row, columnMapping.description)),
+      costCenter: norm(cell(row, columnMapping.costCenter)),
       isOpening: entryNo === 0,
+      accountCategory,
     });
   }
 
-  return { transactions, sheetName, usedFallback };
+  return transactions;
 }
 
-export const isRevenue = (t: Transaction) => t.mainAccount === MAIN_ACCOUNTS.REVENUE;
-export const isMiscRevenue = (t: Transaction) => t.mainAccount === MAIN_ACCOUNTS.MISC_REVENUE;
-export const isOpex = (t: Transaction) => t.mainAccount === MAIN_ACCOUNTS.OPEX;
-export const isAdmin = (t: Transaction) => t.mainAccount === MAIN_ACCOUNTS.ADMIN;
-export const isBank = (t: Transaction) => t.mainAccount === MAIN_ACCOUNTS.BANK;
-export const isCash = (t: Transaction) => t.mainAccount === MAIN_ACCOUNTS.CASH;
-export const isAR = (t: Transaction) => t.mainAccount === MAIN_ACCOUNTS.AR;
-export const isAP = (t: Transaction) => AP_ACCOUNTS.includes(t.mainAccount);
+// ---------------------------------------------------------------------------
+// Classification helpers
+// ---------------------------------------------------------------------------
+
+export const isRevenue = (t: Transaction) => t.accountCategory === "revenue";
+export const isOpex = (t: Transaction) => t.accountCategory === "opex";
+export const isAdmin = (t: Transaction) => t.accountCategory === "admin";
+export const isCashBank = (t: Transaction) => t.accountCategory === "cashBank";
+export const isReceivable = (t: Transaction) => t.accountCategory === "receivables";
+export const isPayable = (t: Transaction) => t.accountCategory === "payables";
 
 export function getAvailableMonths(transactions: Transaction[]): string[] {
   const set = new Set<string>();
@@ -156,6 +194,10 @@ export function getCostCenters(transactions: Transaction[]): string[] {
   return Array.from(set).sort((a, b) => a.localeCompare(b, "ar"));
 }
 
+// ---------------------------------------------------------------------------
+// Income statement
+// ---------------------------------------------------------------------------
+
 export function computeIncomeStatement(
   transactions: Transaction[],
   monthKey: string | "all",
@@ -168,24 +210,24 @@ export function computeIncomeStatement(
     return true;
   });
 
-  let revenue = 0;
-  let miscRevenue = 0;
+  const revenueMap = new Map<string, number>();
   const opexMap = new Map<string, number>();
   const adminMap = new Map<string, number>();
 
   for (const t of filtered) {
-    if (isRevenue(t)) revenue += t.credit - t.debit;
-    else if (isMiscRevenue(t)) miscRevenue += t.credit - t.debit;
-    else if (isOpex(t)) {
-      const key = t.subAccount || "غير مصنف";
+    if (isRevenue(t)) {
+      const key = t.mainAccount || "إيرادات";
+      revenueMap.set(key, (revenueMap.get(key) ?? 0) + (t.credit - t.debit));
+    } else if (isOpex(t)) {
+      const key = t.subAccount || t.mainAccount || "غير مصنف";
       opexMap.set(key, (opexMap.get(key) ?? 0) + (t.debit - t.credit));
     } else if (isAdmin(t)) {
-      const key = t.subAccount || "غير مصنف";
+      const key = t.subAccount || t.mainAccount || "غير مصنف";
       adminMap.set(key, (adminMap.get(key) ?? 0) + (t.debit - t.credit));
     }
   }
 
-  const totalRevenue = revenue + miscRevenue;
+  const totalRevenue = Array.from(revenueMap.values()).reduce((s, v) => s + v, 0);
 
   const toRows = (map: Map<string, number>): IncomeStatementRow[] =>
     Array.from(map.entries())
@@ -196,6 +238,7 @@ export function computeIncomeStatement(
       }))
       .sort((a, b) => b.amount - a.amount);
 
+  const revenueRows = toRows(revenueMap);
   const opexRows = toRows(opexMap);
   const adminRows = toRows(adminMap);
   const totalOpex = opexRows.reduce((s, r) => s + r.amount, 0);
@@ -205,8 +248,7 @@ export function computeIncomeStatement(
 
   return {
     months: monthKey === "all" ? getAvailableMonths(transactions) : [monthKey],
-    revenue,
-    miscRevenue,
+    revenueRows,
     totalRevenue,
     opexRows,
     totalOpex,
@@ -229,8 +271,6 @@ export function getMonthlySummaries(
     return {
       monthKey,
       label: monthKeyToLabel(monthKey),
-      revenue: is.revenue,
-      miscRevenue: is.miscRevenue,
       totalRevenue: is.totalRevenue,
       opex: is.totalOpex,
       admin: is.totalAdmin,
@@ -241,6 +281,10 @@ export function getMonthlySummaries(
     };
   });
 }
+
+// ---------------------------------------------------------------------------
+// Collections & payments
+// ---------------------------------------------------------------------------
 
 function computeRunningBalances(
   transactions: Transaction[],
@@ -268,8 +312,8 @@ function computeRunningBalances(
 
 export function computeCollectionsAnalytics(transactions: Transaction[]): CollectionsMonthRow[] {
   const months = getAvailableMonths(transactions);
-  const arBalances = computeRunningBalances(transactions, isAR, "debit");
-  const apBalances = computeRunningBalances(transactions, isAP, "credit");
+  const arBalances = computeRunningBalances(transactions, isReceivable, "debit");
+  const apBalances = computeRunningBalances(transactions, isPayable, "credit");
   const summaryMap = new Map(getMonthlySummaries(transactions).map((m) => [m.monthKey, m]));
 
   return months.map((monthKey) => {
@@ -281,10 +325,10 @@ export function computeCollectionsAnalytics(transactions: Transaction[]): Collec
     const dailyExpenses = expenses / 30;
 
     const collections = transactions
-      .filter((t) => !t.isOpening && isAR(t) && t.monthKey === monthKey)
+      .filter((t) => !t.isOpening && isReceivable(t) && t.monthKey === monthKey)
       .reduce((s, t) => s + t.credit, 0);
     const payments = transactions
-      .filter((t) => !t.isOpening && isAP(t) && t.monthKey === monthKey)
+      .filter((t) => !t.isOpening && isPayable(t) && t.monthKey === monthKey)
       .reduce((s, t) => s + t.debit, 0);
 
     return {
@@ -302,6 +346,10 @@ export function computeCollectionsAnalytics(transactions: Transaction[]): Collec
   });
 }
 
+// ---------------------------------------------------------------------------
+// Cash flow (direct method, single combined cash/bank ledger)
+// ---------------------------------------------------------------------------
+
 function buildEntryGroups(transactions: Transaction[]): Map<number, Transaction[]> {
   const map = new Map<number, Transaction[]>();
   for (const t of transactions) {
@@ -313,60 +361,50 @@ function buildEntryGroups(transactions: Transaction[]): Map<number, Transaction[
   return map;
 }
 
-function classifyCounterparty(
-  row: Transaction,
-  group: Transaction[],
-  accountKind: "bank" | "cash",
-  direction: "in" | "out"
-): string {
-  const other = group.find((t) => t !== row && t.mainAccount !== row.mainAccount) ?? group.find((t) => t !== row);
+function classifyCounterparty(row: Transaction, group: Transaction[], direction: "in" | "out"): string {
+  const other =
+    group.find((t) => t !== row && t.accountCategory !== row.accountCategory) ??
+    group.find((t) => t !== row);
   if (!other) return "أخرى";
 
   if (direction === "in") {
-    if (other.mainAccount === MAIN_ACCOUNTS.AR || other.mainAccount === MAIN_ACCOUNTS.REVENUE) {
-      return "تحصيلات من العملاء";
+    if (other.accountCategory === "receivables" || other.accountCategory === "revenue") {
+      return "تحصيلات وإيرادات";
     }
-    if (other.mainAccount === MAIN_ACCOUNTS.MISC_REVENUE) return "إيرادات متنوعة";
-    if (accountKind === "bank" && other.mainAccount === MAIN_ACCOUNTS.CASH) return "تحويل من الصندوق";
-    if (accountKind === "cash" && other.mainAccount === MAIN_ACCOUNTS.BANK) return "تحويل من البنك";
-    return "إيرادات وتحصيلات أخرى";
+    if (other.accountCategory === "cashBank") return "تحويل داخلي بين الحسابات النقدية";
+    return "تحصيلات أخرى";
   }
 
-  if (other.mainAccount === MAIN_ACCOUNTS.OPEX) return "مصروفات تشغيل";
-  if (other.mainAccount === MAIN_ACCOUNTS.ADMIN) return "مصروفات إدارية وعمومية";
-  if (AP_ACCOUNTS.includes(other.mainAccount)) return "سداد للموردين";
-  if (accountKind === "bank" && other.mainAccount === MAIN_ACCOUNTS.CASH) return "تحويل إلى الصندوق";
-  if (accountKind === "cash" && other.mainAccount === MAIN_ACCOUNTS.BANK) return "تحويل إلى البنك";
-  return "مصروفات ومدفوعات أخرى";
+  if (other.accountCategory === "opex") return "مصروفات تشغيل";
+  if (other.accountCategory === "admin") return "مصروفات إدارية وعمومية";
+  if (other.accountCategory === "payables") return "سداد للموردين";
+  if (other.accountCategory === "cashBank") return "تحويل داخلي بين الحسابات النقدية";
+  return "مدفوعات أخرى";
 }
 
-function buildCashFlowForAccount(
-  transactions: Transaction[],
-  matcher: (t: Transaction) => boolean,
-  accountKind: "bank" | "cash"
-): CashFlowMonth[] {
+export function computeCashFlow(transactions: Transaction[]): CashFlowMonth[] {
   const months = getAvailableMonths(transactions);
   const entryGroups = buildEntryGroups(transactions);
   const opening = transactions
-    .filter((t) => t.isOpening && matcher(t))
+    .filter((t) => t.isOpening && isCashBank(t))
     .reduce((s, t) => s + (t.debit - t.credit), 0);
 
   let runningOpening = opening;
   const result: CashFlowMonth[] = [];
 
   for (const monthKey of months) {
-    const rows = transactions.filter((t) => !t.isOpening && matcher(t) && t.monthKey === monthKey);
+    const rows = transactions.filter((t) => !t.isOpening && isCashBank(t) && t.monthKey === monthKey);
     const inflowMap = new Map<string, number>();
     const outflowMap = new Map<string, number>();
 
     for (const row of rows) {
       const group = entryGroups.get(row.entryNo) ?? [row];
       if (row.debit > 0) {
-        const label = classifyCounterparty(row, group, accountKind, "in");
+        const label = classifyCounterparty(row, group, "in");
         inflowMap.set(label, (inflowMap.get(label) ?? 0) + row.debit);
       }
       if (row.credit > 0) {
-        const label = classifyCounterparty(row, group, accountKind, "out");
+        const label = classifyCounterparty(row, group, "out");
         outflowMap.set(label, (outflowMap.get(label) ?? 0) + row.credit);
       }
     }
@@ -398,23 +436,20 @@ function buildCashFlowForAccount(
   return result;
 }
 
-export function computeCashFlow(transactions: Transaction[]): CashFlowResult {
-  return {
-    bank: buildCashFlowForAccount(transactions, isBank, "bank"),
-    cash: buildCashFlowForAccount(transactions, isCash, "cash"),
-  };
-}
+// ---------------------------------------------------------------------------
+// Expense analysis
+// ---------------------------------------------------------------------------
 
 export function getExpenseSubAccountSeries(
   transactions: Transaction[],
-  mainAccountMatcher: (t: Transaction) => boolean
+  matcher: (t: Transaction) => boolean
 ): ExpenseSubAccountMonth[] {
   const months = getAvailableMonths(transactions);
   const map = new Map<string, Record<string, number>>();
 
   for (const t of transactions) {
-    if (t.isOpening || !mainAccountMatcher(t)) continue;
-    const key = t.subAccount || "غير مصنف";
+    if (t.isOpening || !matcher(t)) continue;
+    const key = t.subAccount || t.mainAccount || "غير مصنف";
     if (!map.has(key)) {
       const rec: Record<string, number> = {};
       months.forEach((m) => (rec[m] = 0));

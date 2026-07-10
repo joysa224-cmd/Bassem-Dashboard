@@ -3,9 +3,13 @@
 import { useState } from "react";
 import { Menu } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
+import { useData } from "@/components/DataProvider";
+import { ColumnMappingScreen } from "@/components/ColumnMappingScreen";
+import { CategoryMappingScreen } from "@/components/CategoryMappingScreen";
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { stage } = useData();
 
   return (
     <div className="flex min-h-screen w-full">
@@ -29,7 +33,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <span className="text-sm font-bold text-gray-900">Modern Travel</span>
         </header>
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
+        <main className="flex-1 p-4 sm:p-6 lg:p-8">
+          {stage === "mapping-columns" && <ColumnMappingScreen />}
+          {stage === "mapping-categories" && <CategoryMappingScreen />}
+          {stage !== "mapping-columns" && stage !== "mapping-categories" && children}
+        </main>
       </div>
     </div>
   );
