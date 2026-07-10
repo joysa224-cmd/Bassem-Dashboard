@@ -53,17 +53,43 @@ function toDate(value: unknown): Date | null {
   return null;
 }
 
-export function workbookHasTransSheet(buffer: ArrayBuffer): boolean {
-  const workbook = XLSX.read(buffer, { type: "array", bookSheets: true });
-  return workbook.SheetNames.includes(SHEET_NAME);
+export interface SheetResolution {
+  sheetName: string;
+  usedFallback: boolean;
 }
 
-export function parseExcelFile(buffer: ArrayBuffer): Transaction[] {
-  const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-  if (!workbook.SheetNames.includes(SHEET_NAME)) {
-    throw new Error(`لم يتم العثور على شيت باسم "${SHEET_NAME}" في الملف`);
+/**
+ * Prefers a sheet literally named "trans"; otherwise falls back to the
+ * workbook's first sheet so files with a differently-named ledger sheet
+ * still work.
+ */
+export function resolveSheetName(sheetNames: string[]): SheetResolution | null {
+  if (sheetNames.length === 0) return null;
+  if (sheetNames.includes(SHEET_NAME)) {
+    return { sheetName: SHEET_NAME, usedFallback: false };
   }
-  const sheet = workbook.Sheets[SHEET_NAME];
+  return { sheetName: sheetNames[0], usedFallback: true };
+}
+
+export function detectWorkbookSheet(buffer: ArrayBuffer): SheetResolution | null {
+  const workbook = XLSX.read(buffer, { type: "array", bookSheets: true });
+  return resolveSheetName(workbook.SheetNames);
+}
+
+export interface ParsedWorkbook {
+  transactions: Transaction[];
+  sheetName: string;
+  usedFallback: boolean;
+}
+
+export function parseExcelFile(buffer: ArrayBuffer): ParsedWorkbook {
+  const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+  const resolution = resolveSheetName(workbook.SheetNames);
+  if (!resolution) {
+    throw new Error("الملف لا يحتوي على أي شيتات");
+  }
+  const { sheetName, usedFallback } = resolution;
+  const sheet = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
     header: 1,
     range: SKIP_ROWS + HEADER_ROWS,
@@ -101,7 +127,7 @@ export function parseExcelFile(buffer: ArrayBuffer): Transaction[] {
     });
   }
 
-  return transactions;
+  return { transactions, sheetName, usedFallback };
 }
 
 export const isRevenue = (t: Transaction) => t.mainAccount === MAIN_ACCOUNTS.REVENUE;

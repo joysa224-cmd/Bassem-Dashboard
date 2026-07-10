@@ -16,7 +16,13 @@ export async function GET() {
 
   const file = await loadExcelFile();
   if (!file) {
-    const empty: DataPayload = { transactions: [], fileName: null, updatedAt: null };
+    const empty: DataPayload = {
+      transactions: [],
+      fileName: null,
+      updatedAt: null,
+      sheetName: null,
+      usedFallbackSheet: false,
+    };
     return NextResponse.json(empty);
   }
 
@@ -25,11 +31,13 @@ export async function GET() {
       file.buffer.byteOffset,
       file.buffer.byteOffset + file.buffer.byteLength
     );
-    const transactions = parseExcelFile(arrayBuffer as ArrayBuffer);
+    const { transactions, sheetName, usedFallback } = parseExcelFile(arrayBuffer as ArrayBuffer);
     const payload: DataPayload = {
       transactions,
       fileName: file.meta.fileName,
       updatedAt: file.meta.updatedAt,
+      sheetName,
+      usedFallbackSheet: usedFallback,
     };
     return NextResponse.json(payload);
   } catch (err) {

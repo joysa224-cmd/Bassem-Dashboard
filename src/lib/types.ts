@@ -18,6 +18,8 @@ export interface DataPayload {
   transactions: Transaction[];
   fileName: string | null;
   updatedAt: string | null;
+  sheetName: string | null;
+  usedFallbackSheet: boolean;
 }
 
 export interface IncomeStatementRow {

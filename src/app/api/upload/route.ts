@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { workbookHasTransSheet } from "@/lib/dataProcessor";
+import { detectWorkbookSheet } from "@/lib/dataProcessor";
 import { saveExcelFile } from "@/lib/storage";
 
 export const runtime = "nodejs";
@@ -26,21 +26,22 @@ export async function POST(req: NextRequest) {
 
   const arrayBuffer = await file.arrayBuffer();
 
-  let hasSheet = false;
+  let resolution: ReturnType<typeof detectWorkbookSheet>;
   try {
-    hasSheet = workbookHasTransSheet(arrayBuffer);
+    resolution = detectWorkbookSheet(arrayBuffer);
   } catch {
     return NextResponse.json({ error: "تعذر قراءة ملف Excel، تأكد من صحة الملف" }, { status: 400 });
   }
 
-  if (!hasSheet) {
-    return NextResponse.json(
-      { error: 'الملف لا يحتوي على شيت باسم "trans"' },
-      { status: 400 }
-    );
+  if (!resolution) {
+    return NextResponse.json({ error: "الملف لا يحتوي على أي شيتات" }, { status: 400 });
   }
 
   await saveExcelFile(Buffer.from(arrayBuffer), file.name);
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({
+    ok: true,
+    sheetName: resolution.sheetName,
+    usedFallback: resolution.usedFallback,
+  });
 }

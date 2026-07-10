@@ -7,6 +7,8 @@ interface DataContextValue {
   transactions: Transaction[];
   fileName: string | null;
   updatedAt: string | null;
+  sheetName: string | null;
+  usedFallbackSheet: boolean;
   loading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
@@ -18,6 +20,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [sheetName, setSheetName] = useState<string | null>(null);
+  const [usedFallbackSheet, setUsedFallbackSheet] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,6 +38,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setTransactions(payload.transactions);
       setFileName(payload.fileName);
       setUpdatedAt(payload.updatedAt);
+      setSheetName(payload.sheetName);
+      setUsedFallbackSheet(payload.usedFallbackSheet);
     } catch (err) {
       setError(err instanceof Error ? err.message : "تعذر تحميل البيانات");
     } finally {
@@ -46,7 +52,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [refetch]);
 
   return (
-    <DataContext.Provider value={{ transactions, fileName, updatedAt, loading, error, refetch }}>
+    <DataContext.Provider
+      value={{ transactions, fileName, updatedAt, sheetName, usedFallbackSheet, loading, error, refetch }}
+    >
       {children}
     </DataContext.Provider>
   );
