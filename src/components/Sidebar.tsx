@@ -31,7 +31,7 @@ interface SidebarProps {
 
 export function Sidebar({ open = true, onClose }: SidebarProps) {
   const pathname = usePathname();
-  const { refetch, fileName, sheetName, usedFallbackSheet } = useData();
+  const { uploadFile, fileName, sheetName, usedFallbackSheet } = useData();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -43,22 +43,13 @@ export function Sidebar({ open = true, onClose }: SidebarProps) {
     setMessage(null);
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const body = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(body.error || "فشل رفع الملف");
-      }
-
-      const text = body.usedFallback
-        ? `تم رفع الملف بنجاح — تم استخدام الشيت "${body.sheetName}" لعدم وجود شيت باسم "trans"`
-        : `تم رفع الملف بنجاح — الشيت المستخدم: "${body.sheetName}"`;
+      const { sheetName: usedSheet, usedFallback } = await uploadFile(file);
+      const text = usedFallback
+        ? `تم تحميل الملف بنجاح — تم استخدام الشيت "${usedSheet}" لعدم وجود شيت باسم "trans"`
+        : `تم تحميل الملف بنجاح — الشيت المستخدم: "${usedSheet}"`;
       setMessage({ type: "success", text });
-      await refetch();
     } catch (err) {
-      setMessage({ type: "error", text: err instanceof Error ? err.message : "فشل رفع الملف" });
+      setMessage({ type: "error", text: err instanceof Error ? err.message : "فشل تحميل الملف" });
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";

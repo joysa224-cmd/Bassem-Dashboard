@@ -15,13 +15,16 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Log in with the
 `ADMIN_EMAIL` / `ADMIN_PASSWORD` from your `.env.local`, then upload an Excel
-workbook containing a sheet named `trans` from the sidebar.
+workbook containing a sheet named `trans` (or any sheet — see below) from the
+sidebar.
 
 ## Excel format
 
-The uploaded workbook must contain a sheet named `trans`. The first 4 rows are
-skipped; row 5 holds the headers, and data starts at row 6, in this column
-order:
+The uploaded workbook is parsed entirely in the browser (SheetJS/`xlsx`) — no
+file is ever sent to a server. If a sheet named `trans` exists it's used;
+otherwise the workbook's first sheet is used automatically, and the sidebar
+shows which sheet was detected. The first 4 rows of that sheet are skipped;
+row 5 holds the headers, and data starts at row 6, in this column order:
 
 `رقم القيد | تاريخ | مدين | دائن | الحساب الرئيسى | الحساب الفرعى | شرح القيد | الصنف | كمية | السعر | مركز تكلفة`
 
@@ -29,23 +32,24 @@ Rows with `رقم القيد = 0` are treated as opening balances. Bank/cash mov
 are matched to their counterparty account via matching `رقم القيد` (journal
 entry number) to classify cash flow direct-method line items.
 
+Parsed data is cached in the browser's `localStorage` so it persists across
+reloads on the same device/browser — it is not shared between devices or
+uploaded anywhere.
+
 ## Environment variables
 
 See `.env.example`:
 
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD` — single-user login credentials
 - `NEXTAUTH_SECRET`, `NEXTAUTH_URL` — NextAuth JWT session config
-- `BLOB_READ_WRITE_TOKEN` — optional; when set, uploaded Excel files are
-  stored in Vercel Blob. When unset (e.g. local dev), files are stored on
-  local disk under `.data/`.
 
 ## Deployment (Vercel)
 
 1. Push this repo to GitHub and import it in Vercel.
-2. Set the environment variables above in the Vercel project settings
-   (enable Vercel Blob and copy its `BLOB_READ_WRITE_TOKEN` for persistent
-   file storage across serverless invocations).
+2. Set the environment variables above in the Vercel project settings.
 3. Deploy — `vercel.json` is already configured for the Next.js framework.
+   No storage service (Blob, database, etc.) is required since Excel parsing
+   happens entirely client-side.
 
 ## Scripts
 

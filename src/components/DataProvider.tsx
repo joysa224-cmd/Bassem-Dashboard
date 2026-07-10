@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { parseExcelFile } from "@/lib/dataProcessor";
+import { readStoredData, writeStoredData, clearStoredData } from "@/lib/localStore";
 import type { DataPayload, Transaction } from "@/lib/types";
 
 interface DataContextValue {
@@ -11,49 +13,81 @@ interface DataContextValue {
   usedFallbackSheet: boolean;
   loading: boolean;
   error: string | null;
-  refetch: () => Promise<void>;
+  uploadFile: (file: File) => Promise<{ sheetName: string; usedFallback: boolean }>;
+  clearData: () => void;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
 
+const EMPTY: DataPayload = {
+  transactions: [],
+  fileName: null,
+  updatedAt: null,
+  sheetName: null,
+  usedFallbackSheet: false,
+};
+
 export function DataProvider({ children }: { children: React.ReactNode }) {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
-  const [sheetName, setSheetName] = useState<string | null>(null);
-  const [usedFallbackSheet, setUsedFallbackSheet] = useState(false);
+  const [data, setData] = useState<DataPayload>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refetch = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/data", { cache: "no-store" });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || "تعذر تحميل البيانات");
-      }
-      const payload: DataPayload = await res.json();
-      setTransactions(payload.transactions);
-      setFileName(payload.fileName);
-      setUpdatedAt(payload.updatedAt);
-      setSheetName(payload.sheetName);
-      setUsedFallbackSheet(payload.usedFallbackSheet);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "تعذر تحميل البيانات");
-    } finally {
-      setLoading(false);
-    }
+  useEffect(() => {
+    setData(readStoredData() ?? EMPTY);
+    setLoading(false);
   }, []);
 
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
+  const uploadFile = useCallback(async (file: File) => {
+    if (!/\.(xlsx|xls)$/i.test(file.name)) {
+      throw new Error("يجب أن يكون الملف بصيغة Excel (.xlsx)");
+    }
+
+    const arrayBuffer = await file.arrayBuffer();
+
+    let parsed: ReturnType<typeof parseExcelFile>;
+    try {
+      parsed = parseExcelFile(arrayBuffer);
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : "تعذر قراءة ملف Excel، تأكد من صحة الملف");
+    }
+
+    const payload: DataPayload = {
+      transactions: parsed.transactions,
+      fileName: file.name,
+      updatedAt: new Date().toISOString(),
+      sheetName: parsed.sheetName,
+      usedFallbackSheet: parsed.usedFallback,
+    };
+
+    try {
+      writeStoredData(payload);
+    } catch {
+      throw new Error("الملف كبير جدًا على مساحة التخزين المتاحة في المتصفح");
+    }
+
+    setData(payload);
+    setError(null);
+    return { sheetName: parsed.sheetName, usedFallback: parsed.usedFallback };
+  }, []);
+
+  const clearData = useCallback(() => {
+    clearStoredData();
+    setData(EMPTY);
+  }, []);
 
   return (
     <DataContext.Provider
-      value={{ transactions, fileName, updatedAt, sheetName, usedFallbackSheet, loading, error, refetch }}
+      value={{
+        transactions: data.transactions,
+        fileName: data.fileName,
+        updatedAt: data.updatedAt,
+        sheetName: data.sheetName,
+        usedFallbackSheet: data.usedFallbackSheet,
+        loading,
+        error,
+        uploadFile,
+        clearData,
+      }}
     >
       {children}
     </DataContext.Provider>
